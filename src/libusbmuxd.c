@@ -165,6 +165,18 @@ static struct usbmuxd_device_record* device_record_from_plist(plist_t props)
 		dev->location = (uint32_t)val;
 	}
 
+	n = plist_dict_get_item(props, "ConnectionType");
+	if (n && plist_get_node_type(n) == PLIST_STRING) {
+		plist_get_string_val(n, &strval);
+		if (strval) {
+			strncpy(dev->connection_type, strval, 15);
+			free(strval);
+		}
+	}
+
+	//printf("dev_id=%d, pro_id=%d, location=%d, sn=%s, type=%s\n", 
+	DEBUG(1, "%s: dev_id=%d, pro_id=%d, location=%d, sn=%s: type=%s\n", __func__,
+		dev->device_id, dev->product_id, dev->location, dev->serial_number, dev->connection_type);
 	return dev;
 }
 
