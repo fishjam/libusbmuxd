@@ -174,7 +174,7 @@ static struct usbmuxd_device_record* device_record_from_plist(plist_t props)
 		}
 	}
 
-	//printf("dev_id=%d, pro_id=%d, location=%d, sn=%s, type=%s\n", 
+	/* printf("dev_id=%d, pro_id=%d, location=%d, sn=%s, type=%s\n",  */
 	DEBUG(1, "%s: dev_id=%d, pro_id=%d, location=%d, sn=%s: type=%s\n", __func__,
 		dev->device_id, dev->product_id, dev->location, dev->serial_number, dev->connection_type);
 	return dev;
@@ -910,15 +910,17 @@ retry:
 						plist_t pdev = plist_array_get_item(devlist, i);
 						plist_t props = plist_dict_get_item(pdev, "Properties");
 						dev = device_record_from_plist(props);
-						usbmuxd_device_info_t *devinfo = device_info_from_device_record(dev);
-						free(dev);
-						if (!devinfo) {
-							socket_close(sfd);
+						if (strcmp(dev->connection_type, "USB") == 0) {
+						  usbmuxd_device_info_t *devinfo = device_info_from_device_record(dev);
+						  free(dev);
+						  if (!devinfo) {
+						  	socket_close(sfd);
 							DEBUG(1, "%s: can't create device info object\n", __func__);
 							plist_free(list);
 							return -1;
-						}
-						collection_add(&tmpdevs, devinfo);
+						  }
+						  collection_add(&tmpdevs, devinfo);
+                        }
 					}
 					plist_free(list);
 					goto got_device_list;
