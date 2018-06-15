@@ -82,9 +82,32 @@
 #include "socket.h"
 // misc utility functions
 #include "collection.h"
+#include <time.h>
 
 static int libusbmuxd_debug = 0;
-#define DEBUG(x, y, ...) if (x <= libusbmuxd_debug) fprintf(stderr, (y), __VA_ARGS__); fflush(stderr);
+static char str_time[255];
+static const char* libusbmuxd_logfile = NULL;
+static FILE* logFile = NULL;
+
+#define DEBUG(x, y, ...) \
+  if (x <= libusbmuxd_debug) { \
+	time_t the_time; \
+	time(&the_time); \
+	struct tm *p = gmtime(&the_time); \
+	sprintf(str_time, "%02d:%02d:%02d ", p->tm_hour, p->tm_min, p->tm_sec); \
+    if(libusbmuxd_logfile != NULL) { \
+		if (NULL == logFile) { \
+			logFile = fopen(libusbmuxd_logfile, "at+"); \
+			fprintf(logFile, "\nStart new Instance\n"); \
+		} \
+		fprintf(logFile, str_time); \
+		fprintf(logFile, (y), __VA_ARGS__); \
+		fflush(logFile); \
+	} else { \
+		fprintf(stderr, (y), __VA_ARGS__);  \
+		fflush(stderr); \
+	}\
+  }
 
 static struct collection devices;
 static usbmuxd_event_cb_t event_cb = NULL;
@@ -121,8 +144,10 @@ static usbmuxd_device_info_t *devices_find(uint32_t handle)
 static int connect_usbmuxd_socket()
 {
 #if defined(WIN32) || defined(__CYGWIN__)
+	DEBUG(1, "%s: before socket_connect\n", __func__);
 	return socket_connect("127.0.0.1", USBMUXD_SOCKET_PORT);
 #else
+	DEBUG(1, "%s: before socket_connect_unix\n", __func__);
 	return socket_connect_unix(USBMUXD_SOCKET_FILE);
 #endif
 }
@@ -133,6 +158,7 @@ static struct usbmuxd_device_record* device_record_from_plist(plist_t props)
 	plist_t n = NULL;
 	uint64_t val = 0;
 	char *strval = NULL;
+	DEBUG(1, "%s: enter device_record_from_plist\n", __func__);
 
 	dev = (struct usbmuxd_device_record*)malloc(sizeof(struct usbmuxd_device_record));
 	if (!dev)
@@ -190,6 +216,7 @@ static int receive_packet(int sfd, struct usbmuxd_header *header, void **payload
 	header->version = 0;
 	header->message = 0;
 	header->tag = 0;
+	DEBUG(1, "%s: enter receive_packet, sfd=%d, timeout=%d\n", __func__, sfd, timeout);
 
 	recv_len = socket_receive_timeout(sfd, &hdr, sizeof(hdr), 0, timeout);
 	if (recv_len < 0) {
@@ -201,11 +228,13 @@ static int receive_packet(int sfd, struct usbmuxd_header *header, void **payload
 	}
 
 	uint32_t payload_size = hdr.length - sizeof(hdr);
+	DEBUG(1, "%s: receive %d data from socket in %d timeout, payload_size=%d\n", __func__, recv_len, timeout, payload_size);
+
 	if (payload_size > 0) {
 		payload_loc = (char*)malloc(payload_size);
 		uint32_t rsize = 0;
 		do {
-			int res = socket_receive_timeout(sfd, payload_loc + rsize, payload_size - rsize, 0, 5000);
+			int res = socket_receive_timeout(sfd, payload_loc + rsize, payload_size - rsize, 0, 2000);
 			if (res < 0) {
 				break;
 			}
@@ -218,6 +247,7 @@ static int receive_packet(int sfd, struct usbmuxd_header *header, void **payload
 		}
 	}
 
+	DEBUG(1, "%s: receive %d payload data, message=%d\n", __func__, payload_size, hdr.message);
 	if (hdr.message == MESSAGE_PLIST) {
 		char *message = NULL;
 		plist_t plist = NULL;
@@ -325,6 +355,7 @@ static int usbmuxd_get_result(int sfd, uint32_t tag, uint32_t *result, void **re
 	struct usbmuxd_header hdr;
 	int recv_len;
 	uint32_t *res = NULL;
+	DEBUG(1, "%s: sfd=%d, tag=%d, result=%p\n", __func__, sfd, tag, result);
 
 	if (!result) {
 		return -EINVAL;
@@ -334,11 +365,13 @@ static int usbmuxd_get_result(int sfd, uint32_t tag, uint32_t *result, void **re
 		*result_plist = NULL;
 	}
 
-	recv_len = receive_packet(sfd, &hdr, (void**)&res, 5000);
+	recv_len = receive_packet(sfd, &hdr, (void**)&res, 2000);
 	if (recv_len < 0 || (size_t)recv_len < sizeof(hdr)) {
 		free(res);
 		return (recv_len < 0 ? recv_len : -EPROTO);
 	}
+	
+	DEBUG(1, "%s: hdr: length=%d, version=%d, message=%d, tag=%d \n", __func__, hdr.length, hdr.version, hdr.message, hdr.tag);
 
 	if (hdr.message == MESSAGE_RESULT) {
 		int ret = 0;
@@ -430,6 +463,8 @@ static plist_t create_plist_message(const char* message_type)
 static int send_listen_packet(int sfd, uint32_t tag)
 {
 	int res = 0;
+	DEBUG(1, "enter %s\n", __func__);
+
 	if (proto_version == 1) {
 		/* construct message plist */
 		plist_t plist = create_plist_message("Listen");
@@ -477,7 +512,7 @@ static int send_list_devices_packet(int sfd, uint32_t tag)
 
 	/* construct message plist */
 	plist_t plist = create_plist_message("ListDevices");
-
+	DEBUG(1, "%s: before send_plist_packet\n", __func__);
 	res = send_plist_packet(sfd, tag, plist);
 	plist_free(plist);
 
@@ -890,6 +925,7 @@ USBMUXD_API int usbmuxd_get_device_list(usbmuxd_device_info_t **device_list)
 	*device_list = NULL;
 
 retry:
+	DEBUG(1, "%s: before connect_usbmuxd_socket\n", __func__);
 	sfd = connect_usbmuxd_socket();
 	if (sfd < 0) {
 		DEBUG(1, "%s: error opening socket!\n", __func__);
@@ -898,8 +934,10 @@ retry:
 
 	tag = ++use_tag;
 	if ((proto_version == 1) && (try_list_devices)) {
+		DEBUG(1, "%s: before send_list_devices_packet\n", __func__);
 		if (send_list_devices_packet(sfd, tag) > 0) {
 			plist_t list = NULL;
+			DEBUG(1, "%s: before usbmuxd_get_result\n", __func__);
 			if ((usbmuxd_get_result(sfd, tag, &res, &list) == 1) && (res == 0)) {
 				plist_t devlist = plist_dict_get_item(list, "DeviceList");
 				if (devlist && plist_get_node_type(devlist) == PLIST_ARRAY) {
@@ -942,6 +980,7 @@ retry:
 	}
 
 	tag = ++use_tag;
+	
 	if (send_listen_packet(sfd, tag) > 0) {
 		res = -1;
 		// get response
@@ -967,6 +1006,7 @@ retry:
 	collection_init(&tmpdevs);
 
 	// receive device list
+	DEBUG(1, "%s: before receive_packet loop\n", __func__);
 	while (1) {
 		if (receive_packet(sfd, &hdr, &payload, 100) > 0) {
 			if (hdr.message == MESSAGE_DEVICE_ADD) {
@@ -1163,7 +1203,7 @@ USBMUXD_API int usbmuxd_recv_timeout(int sfd, char *data, uint32_t len, uint32_t
 
 USBMUXD_API int usbmuxd_recv(int sfd, char *data, uint32_t len, uint32_t *recv_bytes)
 {
-	return usbmuxd_recv_timeout(sfd, data, len, recv_bytes, 5000);
+	return usbmuxd_recv_timeout(sfd, data, len, recv_bytes, 2000);
 }
 
 USBMUXD_API int usbmuxd_read_buid(char **buid)
@@ -1343,4 +1383,9 @@ USBMUXD_API void libusbmuxd_set_debug_level(int level)
 {
 	libusbmuxd_debug = level;
 	socket_set_verbose(level);
+}
+
+USBMUXD_API void libusbmuxd_enable_logfile(const char* logfile)
+{
+	libusbmuxd_logfile = logfile;
 }

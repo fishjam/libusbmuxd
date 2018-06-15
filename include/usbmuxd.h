@@ -237,6 +237,8 @@ USBMUXD_API_MSC void libusbmuxd_set_use_inotify(int set);
 
 USBMUXD_API_MSC void libusbmuxd_set_debug_level(int level);
 
+USBMUXD_API_MSC void libusbmuxd_enable_logfile(const char* logfile);
+
 #ifdef __cplusplus
 }
 #endif
